@@ -1,0 +1,83 @@
+[project]
+name = "polymoney"
+version = "0.1.0"
+description = "Autonomous betting system for Polymarket (politics focus)"
+requires-python = ">=3.12"
+dependencies = [
+    # Polymarket
+    "py-clob-client>=0.17",
+    "web3>=6.20",
+    "eth-account>=0.11",
+
+    # LLM
+    "anthropic>=0.40",
+
+    # DB
+    "sqlalchemy[asyncio]>=2.0",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.13",
+    "redis>=5.0",
+
+    # API & config
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+
+    # Ingestion
+    "httpx>=0.27",
+    "tweepy>=4.14",
+    "praw>=7.7",
+    "feedparser>=6.0",
+    "pytrends>=4.9",
+    "youtube-transcript-api>=0.6",
+
+    # NLP / embeddings
+    "sentence-transformers>=3.0",
+    "numpy>=2.0",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+
+    # Telegram bot
+    "python-telegram-bot>=21.6",
+
+    # Scheduling
+    "apscheduler>=3.10",
+
+    # Logging
+    "structlog>=24.4",
+    "rich>=13.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ipython>=8.28",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["shared", "ingestion", "signals", "strategy", "execution", "risk", "bot"]
