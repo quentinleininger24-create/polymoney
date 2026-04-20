@@ -9,6 +9,7 @@ from ingestion.onchain import sync_whales
 from ingestion.polymarket import snapshot_markets
 from ingestion.reddit import ingest_reddit
 from ingestion.twitter import ingest_tweets
+from reflection.scoring_loop import score_newly_resolved
 from shared.logging import configure_logging, get_logger
 
 log = get_logger(__name__)
@@ -39,6 +40,9 @@ async def main() -> None:
 
     # Whales (hourly — leaderboard doesn't shift fast)
     sched.add_job(lambda: asyncio.create_task(_safe("whales", sync_whales())), "interval", hours=1)
+
+    # Post-resolution scoring — the feedback loop that powers reflection
+    sched.add_job(lambda: asyncio.create_task(_safe("scoring", score_newly_resolved())), "interval", hours=1)
 
     sched.start()
     log.info("ingestion.scheduler_started")

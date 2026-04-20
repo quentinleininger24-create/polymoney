@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from execution.polymarket_client import PolymarketExecutor
 from ingestion.polymarket import PolymarketReader
+from reflection import confluence, orchestrator, strategy_scorer
 from risk.circuit_breaker import any_tripped, check_daily_drawdown
 from risk.position_sizing import size_intent
 from shared.db import session_scope
@@ -40,13 +41,23 @@ class OrderManager:
 
     async def tick(self) -> None:
         await check_daily_drawdown()
+
+        # Reflection loop: rescore strategies, maybe trigger a self-review.
+        await strategy_scorer.recompute_all()
+        reflection_state = await orchestrator.maybe_reflect()
+
         tripped, name = await any_tripped()
         if tripped:
             log.warning("trade.skipped_circuit_breaker", breaker=name)
             return
 
+        enabled_strats = await strategy_scorer.enabled_strategies()
+
         all_intents: list[TradeIntent] = []
         for strat in self.strategies:
+            # Skip strategies the scorer has disabled (either unseen yet -> allow, or explicitly off)
+            if enabled_strats and strat.name not in enabled_strats:
+                continue
             try:
                 intents = await strat.generate_intents()
                 all_intents.extend(intents)
@@ -61,6 +72,16 @@ class OrderManager:
                 best[k] = i
 
         for intent in best.values():
+            # Confluence gate
+            passes, supporting = await confluence.has_confluence(
+                intent.market_id, intent.outcome, stressed=reflection_state.stressed
+            )
+            if not passes:
+                log.info("trade.skipped_confluence",
+                         market=intent.market_id[:10],
+                         supporting=list(supporting),
+                         stressed=reflection_state.stressed)
+                continue
             await self._execute_intent(intent)
 
     async def _execute_intent(self, intent: TradeIntent) -> None:

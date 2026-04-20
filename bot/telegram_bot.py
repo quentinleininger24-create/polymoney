@@ -15,12 +15,13 @@ from sqlalchemy import desc, func, select
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
+from reflection import source_scorer, strategy_scorer
 from risk.circuit_breaker import MANUAL_PANIC, clear, trip
 from risk.position_sizing import compute_bankroll
 from shared.config import settings
 from shared.db import session_scope
 from shared.logging import configure_logging, get_logger
-from shared.models import Bet, BetStatus, Signal
+from shared.models import Bet, BetStatus, ReflectionRun, Signal
 
 log = get_logger(__name__)
 
@@ -76,6 +77,36 @@ async def cmd_signals(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("*Recent signals*\n" + "\n".join(lines), parse_mode="Markdown")
 
 
+async def cmd_reflect(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show latest reflection run + current strategy scores + top sources."""
+    async with session_scope() as db:
+        last = (await db.execute(
+            select(ReflectionRun).order_by(desc(ReflectionRun.triggered_at)).limit(1)
+        )).scalar_one_or_none()
+    strat_snap = await strategy_scorer.recompute_all()
+    top = await source_scorer.top_sources(limit=5)
+    lines = ["*Reflection*"]
+    if last:
+        lines.append(f"Last trigger: {last.triggered_at:%Y-%m-%d %H:%M} — {last.trigger_reason}")
+        lines.append(f"Resumed: {last.resumed}")
+    else:
+        lines.append("No reflection runs yet.")
+    lines.append("\n*Strategies*")
+    for s in strat_snap:
+        state = "on" if s.enabled else "OFF"
+        lines.append(
+            f"  `{s.name:16}` {state} wr={float(s.win_rate):.0%} "
+            f"streak={s.consecutive_losses} pnl={float(s.total_pnl_usdc):.2f}"
+        )
+    lines.append("\n*Top sources by weight*")
+    for s in top:
+        lines.append(
+            f"  `{s.source_type}/{s.identifier[:24]}` w={float(s.weight):.2f} "
+            f"acc={float(s.accuracy):.0%} n={s.signals_total}"
+        )
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def cmd_panic(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await trip(MANUAL_PANIC, "user invoked /panic")
     await update.message.reply_text("Trading halted. /resume to clear.")
@@ -94,6 +125,7 @@ def main() -> None:
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("positions", cmd_positions))
     app.add_handler(CommandHandler("signals", cmd_signals))
+    app.add_handler(CommandHandler("reflect", cmd_reflect))
     app.add_handler(CommandHandler("panic", cmd_panic))
     app.add_handler(CommandHandler("resume", cmd_resume))
     log.info("telegram.polling")

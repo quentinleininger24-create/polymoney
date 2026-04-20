@@ -13,11 +13,40 @@ ingestion/   collectors (Polymarket CLOB, news, Twitter, Reddit, on-chain whales
 signals/     LLM analyst (Claude) + embedding matcher + anomaly detection
 strategy/    llm_conviction, whale_copy, news_arbitrage + backtest engine
 risk/        Kelly sizing, exposure caps, circuit breakers
+reflection/  self-correction loop: drawdown trigger + source/strategy scoring
+             + confluence gate + retrospective + adapter
 execution/   py-clob-client wrapper (paper + live) and order manager loop
 bot/         Telegram commands + push alerts
 dashboard/   Next.js local UI (localhost:3000)
 shared/      config, async SQLAlchemy models, FastAPI app
 ```
+
+## Reflection (self-correction)
+
+When the system chains losses or drawdown crosses 15% over 7d, the reflection
+engine takes over:
+
+1. **Halt** — trips the `reflection_active` circuit breaker.
+2. **Diagnose** — analyzes the last 14 days of losing bets. For each loss,
+   finds the signals (news, tweets, whales) that pointed at the WINNING side
+   we ignored vs the ones that led us into the losing side.
+3. **Adapt** — disables strategies whose rolling win rate < 30%, boosts the
+   weight of sources that have been consistently right (and early), penalizes
+   sources that kept pushing us wrong.
+4. **Backtest** — replays the last 7 days with the adapted config, compares
+   Sharpe + win rate to pre-adaptation.
+5. **Resume** — only if adapted > current on both metrics. Otherwise stays
+   halted and sends a Telegram alert.
+
+The **source reliability** table is fed continuously: every time a market
+resolves, all signals emitted on it get scored (correct direction? how many
+minutes before the decisive price move did they fire?). Sources that are both
+accurate AND early get weight > 1.0 and their signals count more.
+
+The **confluence gate** blocks trades unless ≥1 distinct source type supports
+the direction (≥2 when the system is stressed post-reflection).
+
+Inspect it any time via Telegram `/reflect`.
 
 Data flow: ingestion -> Postgres (`events`, `markets`, `price_ticks`, `whale_trades`) -> strategies read -> intents -> risk sizing -> executor -> `bets` + Telegram alert.
 
@@ -68,6 +97,7 @@ make bot
 - `/status` - bankroll, cash, open positions, realized PnL
 - `/positions` - list open bets
 - `/signals` - last 10 signals (even if they didn't trigger)
+- `/reflect` - last reflection run + strategy scores + top-weighted sources
 - `/panic` - trip manual circuit breaker, halt trading
 - `/resume` - clear manual breaker
 

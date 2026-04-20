@@ -195,3 +195,73 @@ class CircuitBreakerState(Base):
     tripped_at: Mapped[datetime | None]
     cleared_at: Mapped[datetime | None]
     reason: Mapped[str | None] = mapped_column(Text)
+
+
+class SourceScore(Base):
+    """Per-source accuracy built by the reflection engine from resolved markets.
+
+    Key: (source_type, identifier) e.g. ("twitter", "NateSilver538"),
+    ("newsapi", "reuters.com"), ("whale", "0xabc..."), ("strategy", "llm_conviction").
+    """
+
+    __tablename__ = "source_scores"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    source_type: Mapped[str] = mapped_column(String, index=True)
+    identifier: Mapped[str] = mapped_column(String, index=True)
+    signals_total: Mapped[int] = mapped_column(default=0)
+    signals_correct: Mapped[int] = mapped_column(default=0)
+    accuracy: Mapped[float] = mapped_column(Numeric(5, 4), default=0)
+    avg_lead_minutes: Mapped[float] = mapped_column(Numeric(10, 2), default=0)  # how early they fired
+    weight: Mapped[float] = mapped_column(Numeric(5, 4), default=1.0)  # applied at sizing time
+    last_updated: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("source_type", "identifier", name="uq_source_score"),)
+
+
+class StrategyScore(Base):
+    __tablename__ = "strategy_scores"
+
+    name: Mapped[str] = mapped_column(String, primary_key=True)
+    bets_total: Mapped[int] = mapped_column(default=0)
+    bets_won: Mapped[int] = mapped_column(default=0)
+    win_rate: Mapped[float] = mapped_column(Numeric(5, 4), default=0)
+    total_pnl_usdc: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0)
+    sharpe_estimate: Mapped[float] = mapped_column(Numeric(8, 4), default=0)
+    consecutive_losses: Mapped[int] = mapped_column(default=0)
+    max_drawdown_pct: Mapped[float] = mapped_column(Numeric(5, 4), default=0)
+    enabled: Mapped[bool] = mapped_column(default=True, index=True)
+    allocation_pct: Mapped[float] = mapped_column(Numeric(5, 4), default=0)
+    last_updated: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+
+class ReflectionRun(Base):
+    """Log of every reflection trigger: what caused it, what we changed, outcome."""
+
+    __tablename__ = "reflection_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    triggered_at: Mapped[datetime] = mapped_column(default=datetime.utcnow, index=True)
+    trigger_reason: Mapped[str] = mapped_column(Text)
+    diagnosis: Mapped[dict] = mapped_column(JSONB, default=dict)
+    adjustments: Mapped[dict] = mapped_column(JSONB, default=dict)
+    backtest_before: Mapped[dict] = mapped_column(JSONB, default=dict)
+    backtest_after: Mapped[dict] = mapped_column(JSONB, default=dict)
+    resumed: Mapped[bool] = mapped_column(default=False)
+    resumed_at: Mapped[datetime | None]
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class SignalResolution(Base):
+    """For each signal on a resolved market: was it right? How early?"""
+
+    __tablename__ = "signal_resolutions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    signal_id: Mapped[int] = mapped_column(ForeignKey("signals.id"), unique=True)
+    market_id: Mapped[str] = mapped_column(ForeignKey("markets.id"), index=True)
+    correct: Mapped[bool] = mapped_column(index=True)
+    lead_minutes: Mapped[float] = mapped_column(Numeric(10, 2))  # minutes before decisive move
+    price_at_signal: Mapped[Decimal | None] = mapped_column(Numeric(6, 4))
+    price_at_resolution: Mapped[Decimal] = mapped_column(Numeric(6, 4))
+    scored_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)

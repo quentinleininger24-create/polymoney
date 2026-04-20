@@ -1,5 +1,6 @@
 """Polymarket CLOB ingestion: fetch active political markets + order books."""
 
+import json
 from datetime import datetime
 from decimal import Decimal
 
@@ -12,6 +13,38 @@ log = get_logger(__name__)
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 CLOB_API = "https://clob.polymarket.com"
+
+
+def _parse_tokens(m: dict) -> dict:
+    """Gamma returns clobTokenIds and outcomes as JSON-encoded strings; pair them."""
+    raw_ids = m.get("clobTokenIds")
+    raw_outcomes = m.get("outcomes")
+    if not raw_ids or not raw_outcomes:
+        return {}
+    try:
+        ids = json.loads(raw_ids) if isinstance(raw_ids, str) else raw_ids
+        outs = json.loads(raw_outcomes) if isinstance(raw_outcomes, str) else raw_outcomes
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    out: dict[str, str] = {}
+    for name, tid in zip(outs, ids):
+        key = str(name).strip().upper()
+        if key == "YES":
+            out["YES"] = str(tid)
+        elif key == "NO":
+            out["NO"] = str(tid)
+    return out
+
+
+def _parse_end_date(m: dict) -> datetime | None:
+    for k in ("endDate", "end_date_iso", "endDateIso"):
+        v = m.get(k)
+        if v:
+            try:
+                return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+            except ValueError:
+                continue
+    return None
 
 
 class PolymarketReader:
@@ -77,18 +110,15 @@ async def snapshot_markets() -> int:
         markets = await reader.list_active_markets(vertical=settings.focus_vertical.value)
         async with session_scope() as db:
             for m in markets:
-                tokens = {}
-                for tok in m.get("tokens", []) or []:
-                    if tok.get("outcome") == "Yes":
-                        tokens["YES"] = tok.get("token_id")
-                    elif tok.get("outcome") == "No":
-                        tokens["NO"] = tok.get("token_id")
+                tokens = _parse_tokens(m)
+                if not tokens or "YES" not in tokens:
+                    continue  # skip markets we can't trade (no YES/NO binary outcome)
                 stmt = insert(Market).values(
                     id=m["conditionId"],
                     slug=m.get("slug", ""),
                     question=m.get("question", ""),
-                    category=m.get("category"),
-                    end_date=m.get("endDate"),
+                    category=settings.focus_vertical.value,
+                    end_date=_parse_end_date(m),
                     resolved=m.get("closed", False),
                     tokens=tokens,
                     raw=m,
