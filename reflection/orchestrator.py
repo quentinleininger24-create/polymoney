@@ -70,13 +70,19 @@ async def maybe_reflect() -> ReflectionState:
     diagnosis = await retrospective.analyze_recent_losses()
 
     now = datetime.utcnow()
-    bt_before = await replay("current", now - timedelta(days=14), now - timedelta(days=7), Decimal(100))
-    adjustments = await adapter.apply(diagnosis)
-    bt_after = await replay("adapted", now - timedelta(days=14), now - timedelta(days=7), Decimal(100))
+    window_start = now - timedelta(days=14)
+    window_end = now - timedelta(hours=1)  # exclude bets we just opened
 
-    # Decide whether to resume. Conservative: only resume if adapted > current.
-    improved = bt_after.sharpe or 0 > (bt_before.sharpe or 0) and bt_after.total_pnl_usdc > bt_before.total_pnl_usdc
-    resumed = bool(improved)
+    bt_before = await replay("current", window_start, window_end, Decimal(100))
+    adjustments = await adapter.apply(diagnosis)
+    bt_after = await replay("adapted", window_start, window_end, Decimal(100))
+
+    # Conservative resume: adapted must beat current on BOTH Sharpe and PnL.
+    sharpe_before = float(bt_before.sharpe or 0)
+    sharpe_after = float(bt_after.sharpe or 0)
+    pnl_before = bt_before.total_pnl_usdc
+    pnl_after = bt_after.total_pnl_usdc
+    resumed = (sharpe_after > sharpe_before) and (pnl_after > pnl_before)
     if resumed:
         await clear(REFLECTION_BREAKER)
 
@@ -86,8 +92,8 @@ async def maybe_reflect() -> ReflectionState:
             trigger_reason="; ".join(decision.reasons),
             diagnosis=diagnosis,
             adjustments=adjustments,
-            backtest_before=bt_before.__dict__,
-            backtest_after=bt_after.__dict__,
+            backtest_before=bt_before.as_dict(),
+            backtest_after=bt_after.as_dict(),
             resumed=resumed,
             resumed_at=now if resumed else None,
             notes=None,
@@ -99,6 +105,10 @@ async def maybe_reflect() -> ReflectionState:
         f"disabled: {adjustments.get('disabled_strategies') or 'none'}\n"
         f"sources boosted: {adjustments.get('sources_boosted', 0)}\n"
         f"sources penalized: {adjustments.get('sources_penalized', 0)}\n"
+        f"backtest before: pnl={pnl_before:.2f} sharpe={sharpe_before:.2f} "
+        f"trades={bt_before.total_trades}\n"
+        f"backtest after:  pnl={pnl_after:.2f} sharpe={sharpe_after:.2f} "
+        f"trades={bt_after.total_trades}\n"
         f"resumed: {resumed}"
     )
 

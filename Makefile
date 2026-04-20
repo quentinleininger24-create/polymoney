@@ -39,6 +39,13 @@ bot:
 dashboard:
 	cd dashboard && pnpm dev
 
+backtest:
+	@if [ -z "$(START)" ] || [ -z "$(END)" ]; then \
+	  echo "usage: make backtest START=2026-04-01 END=2026-04-15 [MODE=bets|signals]"; \
+	  exit 1; \
+	fi
+	python -m strategy.backtest --start $(START) --end $(END) --mode $${MODE:-bets}
+
 test:
 	pytest
 
