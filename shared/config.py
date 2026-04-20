@@ -42,7 +42,6 @@ class Settings(BaseSettings):
     reddit_client_secret: str = ""
     reddit_user_agent: str = "polymoney/0.1"
 
-    dune_api_key: str = ""
     alchemy_polygon_key: str = ""
 
     telegram_bot_token: str = ""

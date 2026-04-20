@@ -35,7 +35,8 @@ Fill `.env` with:
 - `ANTHROPIC_API_KEY` (required)
 - `WALLET_PRIVATE_KEY` + `WALLET_ADDRESS` + Polymarket API creds (only for live mode)
 - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (create a bot via @BotFather, grab chat id via @userinfobot)
-- `NEWSAPI_KEY` (free tier fine), `TWITTER_BEARER_TOKEN` (optional), `REDDIT_*`, `DUNE_API_KEY` (for whale tracking)
+- `NEWSAPI_KEY` (free tier fine), `TWITTER_BEARER_TOKEN` (optional), `REDDIT_*`
+- No key required for whale tracking — uses Polymarket's public data API
 
 Leave `MODE=paper` until backtests are green.
 
@@ -93,12 +94,11 @@ make bot
 ## What to build next
 
 Ordered by expected ROI:
-1. Fill in Dune query ID in `ingestion/onchain.py` (whale tracker)
-2. Implement the real backtest loop in `strategy/backtest.py`
-3. pgvector embeddings in `events` table (faster matching at scale)
-4. Debate real-time analyzer (Whisper -> Claude during political debates)
-5. Narrative tracker (topic modeling over Twitter/Reddit streams)
-6. Auto-hedge engine (correlations across linked markets)
+1. Implement the real backtest loop in `strategy/backtest.py`
+2. pgvector embeddings in `events` table (faster matching at scale)
+3. Debate real-time analyzer (Whisper -> Claude during political debates)
+4. Narrative tracker (topic modeling over Twitter/Reddit streams)
+5. Auto-hedge engine (correlations across linked markets)
 
 ## Directory layout
 
