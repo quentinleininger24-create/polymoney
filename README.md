@@ -10,7 +10,7 @@ Autonomous Polymarket betting system. Politics-focused. Single-user.
 
 ```
 ingestion/   collectors (Polymarket CLOB, news, Twitter, Reddit, on-chain whales)
-signals/     LLM analyst (Claude) + embedding matcher + anomaly detection
+signals/     LLM analyst (Gemini 3 Pro/Flash) + embedding matcher + anomaly detection
 strategy/    llm_conviction, whale_copy, news_arbitrage + backtest engine
 risk/        Kelly sizing, exposure caps, circuit breakers
 reflection/  self-correction loop: drawdown trigger + source/strategy scoring
@@ -61,7 +61,7 @@ Prereqs: Python 3.12, Docker, [uv](https://github.com/astral-sh/uv), Node 20+ (a
 That creates `.env`, boots Postgres + Redis, creates the schema, installs Python and Node deps.
 
 Fill `.env` with:
-- `ANTHROPIC_API_KEY` (required)
+- `GEMINI_API_KEY` (required) — uses `gemini-3-pro` for analysis and `gemini-3-flash-preview` for triage, with explicit context-cache on the active-markets block
 - `WALLET_PRIVATE_KEY` + `WALLET_ADDRESS` + Polymarket API creds (only for live mode)
 - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` (create a bot via @BotFather, grab chat id via @userinfobot)
 - `NEWSAPI_KEY` (free tier fine), `TWITTER_BEARER_TOKEN` (optional), `REDDIT_*`

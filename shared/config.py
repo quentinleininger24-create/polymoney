@@ -31,9 +31,9 @@ class Settings(BaseSettings):
     wallet_private_key: str = ""
     wallet_address: str = ""
 
-    anthropic_api_key: str = ""
-    claude_model_fast: str = "claude-haiku-4-5-20251001"
-    claude_model_smart: str = "claude-sonnet-4-6"
+    gemini_api_key: str = ""
+    gemini_model_fast: str = "gemini-3-flash-preview"
+    gemini_model_smart: str = "gemini-3-pro"
 
     newsapi_key: str = ""
     gdelt_enabled: bool = True

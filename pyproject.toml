@@ -9,8 +9,8 @@ dependencies = [
     "web3>=6.20",
     "eth-account>=0.11",
 
-    # LLM
-    "anthropic>=0.40",
+    # LLM (Google Gemini 3)
+    "google-genai>=0.8",
 
     # DB
     "sqlalchemy[asyncio]>=2.0",
