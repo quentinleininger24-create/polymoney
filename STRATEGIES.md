@@ -48,37 +48,47 @@ is poor even though aggregate is great. Addressed by smart-flow below.
 **Live module**: `strategy/smart_whale.py` -- proper Strategy subclass
 consumed by `execution/order_manager.OrderManager`.
 
-### smart-flow (in active validation)
+### smart-flow (validated, complements smart-whale)
 
 **Thesis**: same smart-money basis, but instead of firing on one whale's
 trade, we track cumulative whale flow on each market. Enter when the
 asymmetry between YES and NO whale notional crosses a dominance threshold.
 Fires more often -> better monthly consistency.
 
-**Filters + sizing**:
+**Filters + locked defaults**:
 - Market liquidity: `vol24hr >= $1000` OR total `>= $10000`
 - Min cumulative whale volume on market: `>= $2000`
-- Dominance threshold: `(net_flow_yes - net_flow_no) / total_vol >= 0.5`
-  (i.e. 75/25 split)
+- Dominance threshold: `0.60` (80/20 side split on cumulative whale flow)
 - Price range: [0.10, 0.75]
-- Kelly 0.5, max position 15 pct (safer than smart-whale)
+- Kelly 0.5, max position 12 pct (safer than smart-whale)
 
-**12-month walk-forward on $500 at `--dominance 0.5 --max-pos 0.15`**:
-- n = 35 trades
-- win rate 63 percent
-- pnl +$2853 (570 pct total ROI)
-- Sharpe 3.41
-- max drawdown 26.7 percent
+**12-month walk-forward on $500 at locked defaults**:
+- n = 34 trades
+- win rate 62 percent
+- pnl +$2049 (410 pct total ROI)
+- Sharpe 3.22
+- max drawdown 21.8 percent
 - P(+) 100 percent
-- CI95 [+$1033, +$4723]
+- CI95 [+$609, +$3572]
 - active months 9/12 (75 pct consistency)
-- avg +63.4 pct, worst -27.4 pct, best +145.5 pct per active month
+- avg +45.5 pct, worst -21.8 pct, best +106 pct per active month
 
-Verdict PASS but worst month -27 pct misses my solid gate (wanted >= -15 pct).
-A tighter dominance + smaller max position is running to see if we can
-trade 15-20 pct of average per month for a worst month above -15 pct.
+Param iteration summary (12-month walk-forward, $500):
+| dom | max-pos | n  | wr  | pnl    | DD   | worst mo |
+|-----|---------|----|-----|--------|------|----------|
+| 0.5 | 15 pct  | 35 | 63% | +$2853 | 27%  | -27%     |
+| 0.6 | 12 pct  | 34 | 62% | +$2049 | 22%  | -22% <- locked |
+
+Tighter loses ~18 pct avg monthly but gains 5 pct DD and 5 pct worst month.
+Verdict PASS, not SOLID (worst month -22% misses the -15% gate). If worst
+month at or below -15 pct becomes a hard requirement, next lever is
+`--max-pos 0.08` or adding a mid-market stop-loss.
 
 **Run it**: `python scripts/backtest_smart_flow.py --months 12 --bankroll 500`
+
+**Live module**: `strategy/smart_flow.py`, runs alongside smart-whale.
+Allocated 40 pct of bankroll; smart-whale gets 60 pct. Decorrelated
+triggers = smoother combined equity curve.
 
 ## Tested and dropped
 

@@ -50,7 +50,7 @@ LB = "https://lb-api.polymarket.com"
 DATA = "https://data-api.polymarket.com"
 
 INITIAL_BANKROLL = 500.0
-MAX_POSITION_PCT = 0.15
+MAX_POSITION_PCT = 0.12
 KELLY_FRACTION = 0.5
 FEE_PCT = 0.0
 SLIPPAGE_PCT = 0.005
@@ -60,8 +60,11 @@ MIN_ENTRY_PRICE = 0.10
 MAX_ENTRY_PRICE = 0.75
 
 # Flow dominance threshold: how asymmetric does cumulative whale flow need
-# to be before we trigger? 0.5 means 75/25 side split; 0.7 means 85/15.
-DOMINANCE_THRESHOLD = 0.5
+# to be before we trigger? 0.6 means 80/20 side split.
+# Locked at 0.6 after a 12-month walk-forward: avg +45%/mo vs +63% at 0.5
+# but worst month -22% vs -27% and max DD 21.8% vs 26.7%. Safer profile
+# is worth the 18 point monthly avg hit.
+DOMINANCE_THRESHOLD = 0.6
 MIN_WHALE_VOLUME_USDC = 2000.0  # need at least $2k of whale activity to trust
 
 MIN_VOLUME_24HR = 1000.0
