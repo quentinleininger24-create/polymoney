@@ -62,33 +62,47 @@ Fires more often -> better monthly consistency.
 - Price range: [0.10, 0.75]
 - Kelly 0.5, max position 12 pct (safer than smart-whale)
 
-**12-month walk-forward on $500 at locked defaults**:
-- n = 34 trades
-- win rate 62 percent
-- pnl +$2049 (410 pct total ROI)
-- Sharpe 3.22
-- max drawdown 21.8 percent
-- P(+) 100 percent
-- CI95 [+$609, +$3572]
-- active months 9/12 (75 pct consistency)
-- avg +45.5 pct, worst -21.8 pct, best +106 pct per active month
+**Locked defaults add a monthly-drawdown circuit** (10 pct MTD loss halts
+new entries for the rest of that month). Validated on 12-month walk-forward,
+$500 bankroll:
+- n = 25 trades
+- win rate 60 percent
+- pnl +$1485 (297 pct total ROI)
+- Sharpe 2.75
+- max drawdown 12.0 percent
+- P(+) 99 percent
+- CI95 [+$217, +$2757]
+- active months 8/12 (67 pct consistency)
+- avg +37 pct, worst -13 pct, best +106 pct per active month
 
-Param iteration summary (12-month walk-forward, $500):
-| dom | max-pos | n  | wr  | pnl    | DD   | worst mo |
-|-----|---------|----|-----|--------|------|----------|
-| 0.5 | 15 pct  | 35 | 63% | +$2853 | 27%  | -27%     |
-| 0.6 | 12 pct  | 34 | 62% | +$2049 | 22%  | -22% <- locked |
+Evolution (12-month walk-forward, $500 bankroll, politics):
+| config                           | n  | wr  | pnl    | DD   | worst | avg mo |
+|----------------------------------|----|-----|--------|------|-------|--------|
+| dom 0.5, max 15 pct              | 35 | 63% | +$2853 | 27%  | -27%  | +63%   |
+| dom 0.6, max 12 pct              | 34 | 62% | +$2049 | 22%  | -22%  | +45%   |
+| + monthly stop 10 pct <- locked  | 25 | 60% | +$1485 | 12%  | -13%  | +37%   |
+| + quality filter + WR-weighted   | 12 | 42% | +$123  | 31%  | -12%  | +5%    |
 
-Tighter loses ~18 pct avg monthly but gains 5 pct DD and 5 pct worst month.
-Verdict PASS, not SOLID (worst month -22% misses the -15% gate). If worst
-month at or below -15 pct becomes a hard requirement, next lever is
-`--max-pos 0.08` or adding a mid-market stop-loss.
+The tighter dominance (0.6 vs 0.5) traded 18 points of avg monthly for 5
+points of tail protection. The monthly-stop layer traded another 8 points
+of avg for another 9 points of tail protection, cutting max DD from 22
+percent to 12 percent.
 
-**Run it**: `python scripts/backtest_smart_flow.py --months 12 --bankroll 500`
+Combining whale-accuracy filter + WR-weighted flow + monthly stop
+collapsed the strategy. Quality filtering killed so many whale signals
+that only 12 trades fired over 12 months, with win rate dropping to 42
+percent. Over-optimization red flag: v1 is a local optimum that does NOT
+survive naive filter stacking.
+
+**Run it**: `python scripts/backtest_smart_flow_v2.py --months 12 --bankroll 500`
+(the v1 script without the monthly stop still exists as
+`backtest_smart_flow.py` for reference).
 
 **Live module**: `strategy/smart_flow.py`, runs alongside smart-whale.
 Allocated 40 pct of bankroll; smart-whale gets 60 pct. Decorrelated
-triggers = smoother combined equity curve.
+triggers = smoother combined equity curve. Monthly stop is enforced via
+`SmartFlowStrategy._month_is_halted()` checked at every `generate_intents()`
+call.
 
 ## Tested and dropped
 

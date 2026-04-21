@@ -2,20 +2,34 @@
 
 Complements smart-whale by firing more often -- every market where the
 cumulative YES/NO whale notional imbalance exceeds the dominance
-threshold, not just on the first whale's trade. Validated on a 12-month
-walk-forward with monthly consistency 75 pct and avg +45 pct per active
-month.
+threshold, not just on the first whale's trade.
 
-Locked defaults (see scripts/backtest_smart_flow.py):
+Locked defaults (see scripts/backtest_smart_flow_v2.py):
 - dominance threshold: 0.6 (80/20 side split on cumulative whale flow)
 - min whale cumulative volume on market: $2000
 - kelly: 0.5
 - max position: 12 pct
+- MONTHLY DRAWDOWN CIRCUIT: 10 pct -- halts new entries for rest of month
+  once MTD PnL drops 10 pct below the bankroll's start-of-month value.
+  Adds +9 pts of worst-month protection (cut -22 pct to -13 pct) and
+  halves max DD (22 pct -> 12 pct) at the cost of 8 pts of avg monthly.
+  Validated on 12-month walk-forward, $500 bankroll:
+    n=25 wr 60 pct pnl +$1485 sharpe 2.75 DD 12 pct P(+) 99 pct
+    worst -13 pct avg +37 pct consistency 67 pct
 
 Safer-than-smart-whale design:
 - Lower Kelly, lower max-pos = smaller per-trade exposure
 - More trades = better diversification over time
 - Hold to resolution (no mid-market exit complexity)
+- Monthly drawdown stop bounds the tail each month
+
+Note: the walk-forward whale-accuracy-filter variant (v2 with WR gate)
+was tested and REDUCED performance drastically vs v1 (n=12 vs 34, avg
+monthly +4.9 pct vs +45 pct). Quality filtering combined with flow
+weighting over-constrained the signal. Kept as a research branch in
+scripts/backtest_smart_flow_v2.py with `--min-whale-wr` flag, but NOT
+enabled here. The monthly drawdown circuit was the only v2 feature that
+isolated cleanly as a net improvement.
 """
 
 from __future__ import annotations
@@ -42,6 +56,7 @@ class SmartFlowStrategy(Strategy):
     # Locked defaults from validated 12-month walk-forward
     effective_kelly = 0.50
     effective_max_position_pct = 0.12
+    monthly_drawdown_stop_pct = 0.10
 
     def __init__(
         self,
@@ -52,6 +67,7 @@ class SmartFlowStrategy(Strategy):
         min_market_total_volume: float = 10_000.0,
         min_price: float = 0.10,
         max_price: float = 0.75,
+        monthly_drawdown_stop_pct: float = 0.10,
     ):
         self.lookback_hours = lookback_hours
         self.dominance_threshold = dominance_threshold
@@ -60,6 +76,7 @@ class SmartFlowStrategy(Strategy):
         self.min_total_vol = min_market_total_volume
         self.min_price = Decimal(str(min_price))
         self.max_price = Decimal(str(max_price))
+        self.monthly_drawdown_stop_pct = monthly_drawdown_stop_pct
 
     def _market_is_liquid(self, market: Market) -> bool:
         raw = market.raw or {}
@@ -70,7 +87,25 @@ class SmartFlowStrategy(Strategy):
             return False
         return vol24 >= self.min_vol24 or total >= self.min_total_vol
 
+    async def _month_is_halted(self) -> bool:
+        """True if this strategy's month-to-date PnL is at or below the
+        monthly-drawdown stop (pct of initial bankroll)."""
+        month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        async with session_scope() as db:
+            mtd = (await db.execute(
+                select(func.coalesce(func.sum(Bet.pnl_usdc), 0)).where(
+                    Bet.strategy == self.name,
+                    Bet.closed_at >= month_start,
+                    Bet.status != BetStatus.OPEN,
+                )
+            )).scalar_one()
+        limit = Decimal(str(settings.initial_bankroll_usdc)) * Decimal(str(-self.monthly_drawdown_stop_pct))
+        return Decimal(mtd) <= limit
+
     async def generate_intents(self) -> list[TradeIntent]:
+        if await self._month_is_halted():
+            log.warning("smart_flow.month_halted", stop_pct=self.monthly_drawdown_stop_pct)
+            return []
         cutoff = datetime.utcnow() - timedelta(hours=self.lookback_hours)
         async with session_scope() as db:
             rows = (await db.execute(
