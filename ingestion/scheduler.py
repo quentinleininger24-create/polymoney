@@ -7,6 +7,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from ingestion.news import ingest_news
 from ingestion.onchain import sync_whales
 from ingestion.polymarket import snapshot_markets
+from ingestion.prices_history import snapshot_current_prices
 from ingestion.reddit import ingest_reddit
 from ingestion.twitter import ingest_tweets
 from reflection.scoring_loop import score_newly_resolved
@@ -28,6 +29,9 @@ async def main() -> None:
 
     # Polymarket markets refresh (10 min)
     sched.add_job(lambda: asyncio.create_task(_safe("markets", snapshot_markets())), "interval", minutes=10)
+
+    # Price snapshot (5 min) — fuels PriceTick table used by reflection decisive-move detection
+    sched.add_job(lambda: asyncio.create_task(_safe("prices", snapshot_current_prices())), "interval", minutes=5)
 
     # News ingestion (5 min — politics moves fast on breaking news)
     sched.add_job(lambda: asyncio.create_task(_safe("news", ingest_news())), "interval", minutes=5)

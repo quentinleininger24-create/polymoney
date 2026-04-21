@@ -33,17 +33,25 @@ LB = "https://lb-api.polymarket.com"
 DATA = "https://data-api.polymarket.com"
 
 INITIAL_BANKROLL = 100.0
-MAX_POSITION_PCT = 0.05
-KELLY_FRACTION = 0.33
+MAX_POSITION_PCT = 0.10        # 10 percent per trade max (bumped up)
+KELLY_FRACTION = 0.50          # 1/2 Kelly (more aggressive for small bankroll)
 
-POLYMARKET_FEE_PCT = 0.02     # taker fee, conservative
-SLIPPAGE_PCT = 0.005           # 50 bps when copying late
-GAS_USDC = 0.05                # ~Polygon gas in USDC equivalent
+# Most political markets on Polymarket have feesEnabled=False on gamma.
+# Leave a safety margin anyway in case we cross the spread aggressively.
+POLYMARKET_FEE_PCT = 0.0
+SLIPPAGE_PCT = 0.005            # 50 bps slippage from copy delay
+GAS_USDC = 0.05                 # ~Polygon gas in USDC equivalent
+
+# Entry price filter: only copy whales in this range
+# Below 0.10: lottery tickets, likely noise
+# Above 0.80: payoff too small to overcome miss rate
+MIN_ENTRY_PRICE = 0.10
+MAX_ENTRY_PRICE = 0.80
 
 WHALE_MIN_TRADE_USDC = 200.0
 WHALE_LEADERBOARD_LIMIT = 100
 TRADES_PAGE_SIZE = 500
-TRADES_MAX_PAGES = 20  # hard cap: 10k trades per whale
+TRADES_MAX_PAGES = 20           # hard cap: 10k trades per whale
 
 REQUEST_DELAY_SEC = 0.15  # polite to public API
 
@@ -277,7 +285,7 @@ def strat_whale_copy(
         seen.add(key)
 
         price = float(t.get("price", 0))
-        if price <= 0 or price >= 1:
+        if price < MIN_ENTRY_PRICE or price > MAX_ENTRY_PRICE:
             continue
 
         # Assume modest edge: whale's price + 5% on their side (they usually pick early)
@@ -554,26 +562,39 @@ def run(months: int, seed: int, verticals: list[str]) -> dict:
 
 
 def main() -> None:
-    global INITIAL_BANKROLL
+    global INITIAL_BANKROLL, MAX_POSITION_PCT, KELLY_FRACTION
+    global MIN_ENTRY_PRICE, MAX_ENTRY_PRICE, POLYMARKET_FEE_PCT, WHALE_MIN_TRADE_USDC
     p = argparse.ArgumentParser()
     p.add_argument("--months", type=int, default=6, help="walk-forward window count")
-    p.add_argument("--bankroll", type=float, default=INITIAL_BANKROLL, help="starting bankroll USDC")
+    p.add_argument("--bankroll", type=float, default=INITIAL_BANKROLL)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument(
-        "--verticals",
-        default="politics",
-        help=f"comma-separated: {','.join(VERTICAL_TAGS)} (default: politics)",
-    )
-    p.add_argument("--json", action="store_true", help="dump final summary as JSON to stdout")
+    p.add_argument("--verticals", default="politics",
+                   help=f"comma-separated: {','.join(VERTICAL_TAGS)}")
+    p.add_argument("--kelly", type=float, default=KELLY_FRACTION, help="Kelly fraction (0..1)")
+    p.add_argument("--max-pos", type=float, default=MAX_POSITION_PCT, help="max pct per trade")
+    p.add_argument("--min-price", type=float, default=MIN_ENTRY_PRICE)
+    p.add_argument("--max-price", type=float, default=MAX_ENTRY_PRICE)
+    p.add_argument("--fee", type=float, default=POLYMARKET_FEE_PCT, help="fee as decimal (0.02 = 2%)")
+    p.add_argument("--min-whale-usdc", type=float, default=WHALE_MIN_TRADE_USDC)
+    p.add_argument("--json", action="store_true")
     args = p.parse_args()
+
     INITIAL_BANKROLL = args.bankroll
+    KELLY_FRACTION = args.kelly
+    MAX_POSITION_PCT = args.max_pos
+    MIN_ENTRY_PRICE = args.min_price
+    MAX_ENTRY_PRICE = args.max_price
+    POLYMARKET_FEE_PCT = args.fee
+    WHALE_MIN_TRADE_USDC = args.min_whale_usdc
     verticals = [v.strip() for v in args.verticals.split(",") if v.strip()]
 
     print("=" * 78)
     print("polymoney whale-copy backtest (standalone)")
     print(f"  bankroll=${args.bankroll}  windows={args.months}  verticals={verticals}  seed={args.seed}")
-    print(f"  fees={POLYMARKET_FEE_PCT:.0%} taker  slippage={SLIPPAGE_PCT:.1%}  gas=${GAS_USDC}")
-    print(f"  whale_min_usdc=${WHALE_MIN_TRADE_USDC}  leaderboard={WHALE_LEADERBOARD_LIMIT} per window")
+    print(f"  fees={POLYMARKET_FEE_PCT:.1%}  slippage={SLIPPAGE_PCT:.1%}  gas=${GAS_USDC}")
+    print(f"  kelly={KELLY_FRACTION}  max_pos={MAX_POSITION_PCT:.0%}  "
+          f"price_range=[{MIN_ENTRY_PRICE:.2f},{MAX_ENTRY_PRICE:.2f}]  "
+          f"whale_min=${WHALE_MIN_TRADE_USDC}")
     print("=" * 78)
 
     result = run(months=args.months, seed=args.seed, verticals=verticals)

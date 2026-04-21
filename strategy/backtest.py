@@ -261,6 +261,8 @@ async def replay(
 # --- Signal-replay variant -------------------------------------------------
 
 async def _price_at(market_id: str, ts: datetime, window_minutes: int = 30) -> Decimal | None:
+    """Look up the YES midpoint at `ts`. Tries local PriceTick first; falls back
+    to the CLOB prices-history API (cached per-token in memory)."""
     delta = timedelta(minutes=window_minutes)
     async with session_scope() as db:
         tick = (await db.execute(
@@ -273,7 +275,21 @@ async def _price_at(market_id: str, ts: datetime, window_minutes: int = 30) -> D
             .order_by(PriceTick.ts)
             .limit(1)
         )).scalar_one_or_none()
-    return tick.yes_mid if tick else None
+    if tick:
+        return tick.yes_mid
+
+    # Fallback: hit CLOB prices-history for this market's YES token
+    from ingestion.prices_history import price_at as clob_price_at
+
+    async with session_scope() as db:
+        m = (await db.execute(
+            select(Market).where(Market.id == market_id)
+        )).scalar_one_or_none()
+    yes_token = (m.tokens or {}).get("YES") if m else None
+    if not yes_token:
+        return None
+    price = await clob_price_at(yes_token, ts, max_gap_seconds=window_minutes * 60)
+    return Decimal(str(price)) if price is not None else None
 
 
 async def replay_signals(
