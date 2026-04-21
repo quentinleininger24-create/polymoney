@@ -24,6 +24,7 @@ from shared.models import Bet, BetStatus, Market, Order, OrderSide, OrderStatus
 from strategy.base import Strategy, TradeIntent
 from strategy.llm_conviction import LLMConvictionStrategy
 from strategy.news_arbitrage import NewsArbitrageStrategy
+from strategy.smart_whale import SmartWhaleStrategy
 from strategy.whale_copy import WhaleCopyStrategy
 
 log = get_logger(__name__)
@@ -32,6 +33,7 @@ log = get_logger(__name__)
 class OrderManager:
     def __init__(self, strategies: list[Strategy] | None = None) -> None:
         self.strategies = strategies or [
+            SmartWhaleStrategy(),   # validated winner, primary allocation
             LLMConvictionStrategy(),
             WhaleCopyStrategy(),
             NewsArbitrageStrategy(),
@@ -112,6 +114,8 @@ class OrderManager:
             confidence=intent.confidence,
             current_yes_price=float(yes_price),
         )
+        if intent.max_size_usdc is not None:
+            size_usdc = min(size_usdc, intent.max_size_usdc)
         if size_usdc <= Decimal("1"):
             return
 
