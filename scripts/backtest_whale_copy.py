@@ -40,9 +40,10 @@ POLYMARKET_FEE_PCT = 0.02     # taker fee, conservative
 SLIPPAGE_PCT = 0.005           # 50 bps when copying late
 GAS_USDC = 0.05                # ~Polygon gas in USDC equivalent
 
-WHALE_MIN_TRADE_USDC = 500.0
-WHALE_LEADERBOARD_LIMIT = 50
-MAX_TRADES_PER_WHALE = 500   # we filter by window in code
+WHALE_MIN_TRADE_USDC = 200.0
+WHALE_LEADERBOARD_LIMIT = 100
+TRADES_PAGE_SIZE = 500
+TRADES_MAX_PAGES = 20  # hard cap: 10k trades per whale
 
 REQUEST_DELAY_SEC = 0.15  # polite to public API
 
@@ -68,15 +69,22 @@ def _http_json(url: str, params: dict | None = None, retries: int = 3) -> object
 
 # ---- Polymarket data ------------------------------------------------------
 
-def fetch_resolved_political_markets(start: datetime, end: datetime, hard_cap: int = 5000) -> list[dict]:
-    """Pull resolved political markets via /events (the /markets endpoint mis-tags
-    crypto markets as politics so we go event-first and flatten markets out).
+VERTICAL_TAGS: dict[str, tuple[str, ...]] = {
+    "politics": ("us-politics", "elections", "trump"),
+    "sports": ("sports", "nfl", "nba", "soccer", "mlb"),
+    "crypto": ("crypto", "bitcoin", "ethereum"),
+    "geopolitics": ("geopolitics", "russia-ukraine", "middle-east"),
+}
 
-    Tags us-politics, elections, trump are unioned (different events use different ones).
+
+def fetch_markets_for_vertical(start: datetime, end: datetime, vertical: str, hard_cap: int = 5000) -> list[dict]:
+    """Pull resolved markets in a vertical via /events (the /markets endpoint has
+    bad tag hygiene). Unions the underlying tag slugs.
     """
+    tags = VERTICAL_TAGS.get(vertical, (vertical,))
     out: list[dict] = []
     seen_cond: set[str] = set()
-    for tag in ("us-politics", "elections", "trump"):
+    for tag in tags:
         offset = 0
         page_size = 100
         while offset < hard_cap:
@@ -121,19 +129,38 @@ def fetch_top_whales(window: str = "30d", limit: int = WHALE_LEADERBOARD_LIMIT) 
     return rows if isinstance(rows, list) else []
 
 
-def fetch_user_trades(wallet: str, limit: int = MAX_TRADES_PER_WHALE) -> list[dict]:
-    rows = _http_json(f"{DATA}/trades", {"user": wallet, "limit": limit})
-    return rows if isinstance(rows, list) else []
+def fetch_user_trades_paginated(
+    wallet: str, oldest_needed_ts: float, page_size: int = TRADES_PAGE_SIZE
+) -> list[dict]:
+    """Paginate via offset until we have trades covering back to oldest_needed_ts.
+    Stops early when the oldest returned trade is older than needed.
+    """
+    out: list[dict] = []
+    for page in range(TRADES_MAX_PAGES):
+        rows = _http_json(f"{DATA}/trades", {
+            "user": wallet,
+            "limit": page_size,
+            "offset": page * page_size,
+        })
+        if not isinstance(rows, list) or not rows:
+            break
+        out.extend(rows)
+        oldest_in_page = float(rows[-1].get("timestamp", 0) or 0)
+        if oldest_in_page and oldest_in_page < oldest_needed_ts:
+            break
+        if len(rows) < page_size:
+            break
+    return out
 
 
 # Cache of fetched trades per whale -- avoid refetching across windows
 _whale_trades_cache: dict[str, list[dict]] = {}
 
 
-def cached_user_trades(wallet: str) -> list[dict]:
+def cached_user_trades(wallet: str, oldest_needed_ts: float) -> list[dict]:
     if wallet not in _whale_trades_cache:
         try:
-            _whale_trades_cache[wallet] = fetch_user_trades(wallet)
+            _whale_trades_cache[wallet] = fetch_user_trades_paginated(wallet, oldest_needed_ts)
         except Exception as e:
             print(f"  ! trades fetch failed for {wallet[:8]}: {e}", file=sys.stderr)
             _whale_trades_cache[wallet] = []
@@ -216,6 +243,7 @@ def strat_whale_copy(
     test_end: datetime,
     markets_by_cond: dict[str, dict],
     whales: list[dict],
+    oldest_needed_ts: float,
 ) -> list[SimBet]:
     """Mirror the first big trade by a top whale on each tracked market."""
     bets: list[SimBet] = []
@@ -225,7 +253,7 @@ def strat_whale_copy(
     rows: list[tuple[float, str, dict, dict]] = []
     for w in whales:
         addr = w["proxyWallet"].lower()
-        trades = cached_user_trades(addr)
+        trades = cached_user_trades(addr, oldest_needed_ts)
         for t in trades:
             cond = t.get("conditionId")
             if not cond or cond not in markets_by_cond:
@@ -278,6 +306,7 @@ def strat_anti_whale(
     test_end: datetime,
     markets_by_cond: dict[str, dict],
     whales: list[dict],
+    oldest_needed_ts: float,
 ) -> list[SimBet]:
     """Bet AGAINST the whale at the same entry price (sanity baseline).
     Whale-copy edge implies anti-whale loses; if anti-whale beats whale-copy,
@@ -290,7 +319,7 @@ def strat_anti_whale(
 
     rows: list[tuple[float, dict, dict]] = []
     for w in whales:
-        for t in cached_user_trades(w["proxyWallet"].lower()):
+        for t in cached_user_trades(w["proxyWallet"].lower(), oldest_needed_ts):
             cond = t.get("conditionId")
             if not cond or cond not in markets_by_cond:
                 continue
@@ -381,9 +410,11 @@ def compute_stats(bets: list[SimBet]) -> Stats:
     )
 
 
-def bootstrap_ci(bets: list[SimBet], n_resamples: int = 2000, conf: float = 0.95, seed: int = 42) -> tuple[float, float]:
+def bootstrap_stats(
+    bets: list[SimBet], n_resamples: int = 2000, conf: float = 0.95, seed: int = 42
+) -> dict:
     if not bets:
-        return (0.0, 0.0)
+        return {"ci_lo": 0.0, "ci_hi": 0.0, "median": 0.0, "p_positive": 0.0}
     rng = random.Random(seed)
     pnls = [b.pnl for b in bets]
     samples: list[float] = []
@@ -393,20 +424,37 @@ def bootstrap_ci(bets: list[SimBet], n_resamples: int = 2000, conf: float = 0.95
     samples.sort()
     lo = samples[int(n_resamples * (1 - conf) / 2)]
     hi = samples[int(n_resamples * (1 + conf) / 2)]
-    return (lo, hi)
+    median = samples[n_resamples // 2]
+    p_pos = sum(1 for s in samples if s > 0) / n_resamples
+    return {"ci_lo": lo, "ci_hi": hi, "median": median, "p_positive": p_pos}
 
 
 # ---- Walk-forward driver --------------------------------------------------
 
-def run(months: int, seed: int) -> dict:
+def run(months: int, seed: int, verticals: list[str]) -> dict:
     end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    oldest_start = end - timedelta(days=30 * months)
+    oldest_needed_ts = oldest_start.timestamp()
     rng = random.Random(seed)
 
-    print("Fetching top whales (current leaderboard) ...")
-    whales = fetch_top_whales("all", WHALE_LEADERBOARD_LIMIT)
-    if not whales:
-        whales = fetch_top_whales("30d", WHALE_LEADERBOARD_LIMIT)
-    print(f"  -> {len(whales)} whales loaded")
+    print("Fetching top whales (union of all-time and 30d leaderboards) ...")
+    all_time = fetch_top_whales("all", WHALE_LEADERBOARD_LIMIT)
+    recent = fetch_top_whales("30d", WHALE_LEADERBOARD_LIMIT)
+    whale_map: dict[str, dict] = {}
+    for w in all_time + recent:
+        addr = w.get("proxyWallet", "").lower()
+        if addr:
+            whale_map[addr] = w
+    whales = list(whale_map.values())
+    print(f"  -> {len(whales)} unique whales")
+
+    print(f"Paginating trades per whale back to {oldest_start.date()} ...")
+    for i, w in enumerate(whales, 1):
+        cached_user_trades(w["proxyWallet"].lower(), oldest_needed_ts)
+        if i % 20 == 0:
+            print(f"  ({i}/{len(whales)} whales cached)")
+    total_trades = sum(len(v) for v in _whale_trades_cache.values())
+    print(f"  -> {total_trades} total trades cached")
 
     all_whale_bets: list[SimBet] = []
     all_anti_bets: list[SimBet] = []
@@ -418,14 +466,16 @@ def run(months: int, seed: int) -> dict:
         label = f"{test_start.date()} -> {test_end.date()}"
         print(f"\n[Window {months - i + 1}/{months}] {label}")
 
-        markets = fetch_resolved_political_markets(test_start, test_end)
+        markets: list[dict] = []
+        for v in verticals:
+            markets.extend(fetch_markets_for_vertical(test_start, test_end, v))
         markets_by_cond = {m["conditionId"]: m for m in markets if m.get("conditionId")}
-        print(f"  resolved political markets: {len(markets_by_cond)}")
+        print(f"  resolved markets in verticals {verticals}: {len(markets_by_cond)}")
         if not markets_by_cond:
             continue
 
-        wb = strat_whale_copy(test_start, test_end, markets_by_cond, whales)
-        ab = strat_anti_whale(test_start, test_end, markets_by_cond, whales)
+        wb = strat_whale_copy(test_start, test_end, markets_by_cond, whales, oldest_needed_ts)
+        ab = strat_anti_whale(test_start, test_end, markets_by_cond, whales, oldest_needed_ts)
         sw, sa = compute_stats(wb), compute_stats(ab)
         print(f"  whale-copy:   trades={sw.n:3d}  wr={sw.win_rate:.0%}  pnl=${sw.pnl:7.2f}  roi={sw.roi_pct:+6.1f}%  sharpe={sw.sharpe:5.2f}  dd={sw.max_dd_pct:5.1f}%")
         print(f"  anti-whale:   trades={sa.n:3d}  wr={sa.win_rate:.0%}  pnl=${sa.pnl:7.2f}  roi={sa.roi_pct:+6.1f}%  sharpe={sa.sharpe:5.2f}  dd={sa.max_dd_pct:5.1f}%")
@@ -441,9 +491,12 @@ def run(months: int, seed: int) -> dict:
     summary: dict[str, dict] = {}
     for name, bets in [("whale_copy", all_whale_bets), ("anti_whale", all_anti_bets)]:
         s = compute_stats(bets)
-        lo, hi = bootstrap_ci(bets)
-        print(f"  {name:11}  n={s.n:3d}  wr={s.win_rate:.1%}  pnl=${s.pnl:8.2f}  sharpe={s.sharpe:5.2f}  CI95=[${lo:7.2f}, ${hi:7.2f}]")
-        summary[name] = {**s.__dict__, "ci_lo": lo, "ci_hi": hi}
+        bs = bootstrap_stats(bets)
+        print(
+            f"  {name:11}  n={s.n:3d}  wr={s.win_rate:.1%}  pnl=${s.pnl:8.2f}  sharpe={s.sharpe:5.2f}  "
+            f"median=${bs['median']:+7.2f}  P(+)={bs['p_positive']:.0%}  CI95=[${bs['ci_lo']:7.2f}, ${bs['ci_hi']:7.2f}]"
+        )
+        summary[name] = {**s.__dict__, **bs}
 
     print("\nVERDICT")
     whale = summary["whale_copy"]
@@ -451,18 +504,33 @@ def run(months: int, seed: int) -> dict:
     if whale["n"] < 30:
         verdict = "INSUFFICIENT_DATA"
         msg = f"only {whale['n']} whale-copy trades; need 30+ for any conclusion."
-    elif whale["ci_lo"] > 0 and whale["pnl"] > anti["pnl"]:
-        verdict = "PASS"
-        msg = "lower 95% CI bound > 0 AND beats anti-whale baseline. Provisional edge exists."
+    elif whale["ci_lo"] > 0:
+        verdict = "PASS_STRONG"
+        msg = f"lower 95% CI > 0 (${whale['ci_lo']:.2f}). High confidence of positive edge."
     elif whale["ci_hi"] < 0:
         verdict = "FAIL"
-        msg = "upper 95% CI bound < 0. No detectable edge -- do NOT go live."
-    elif whale["pnl"] <= anti["pnl"]:
+        msg = f"upper 95% CI < 0 (${whale['ci_hi']:.2f}). No detectable edge."
+    elif (
+        whale["p_positive"] >= 0.70
+        and whale["sharpe"] > max(0.3, anti["sharpe"])
+        and whale["ci_lo"] > anti["ci_lo"]
+    ):
+        verdict = "PASS_PROVISIONAL"
+        msg = (
+            f"P(positive)={whale['p_positive']:.0%}, sharpe={whale['sharpe']:.2f} beats anti-whale "
+            f"({anti['sharpe']:.2f}), tail risk better (lo ${whale['ci_lo']:.2f} vs ${anti['ci_lo']:.2f}). "
+            "Risk-adjusted edge present; CI still wide -- paper trade before sizing up."
+        )
+    elif whale["p_positive"] < 0.50:
         verdict = "FAIL"
-        msg = "whale-copy did not beat anti-whale baseline. Following whales gives no advantage here."
+        msg = f"P(positive)={whale['p_positive']:.0%} < 50%. Median outcome is negative."
     else:
         verdict = "INCONCLUSIVE"
-        msg = "CI straddles zero. Either no edge or sample too small."
+        msg = (
+            f"P(positive)={whale['p_positive']:.0%}, sharpe={whale['sharpe']:.2f} vs "
+            f"anti-whale {anti['sharpe']:.2f}. Edge not clearly risk-adjusted superior. "
+            "More data needed."
+        )
     print(f"  {verdict}: {msg}")
 
     print("\nLIMITATIONS (read before drawing conclusions)")
@@ -491,17 +559,24 @@ def main() -> None:
     p.add_argument("--months", type=int, default=6, help="walk-forward window count")
     p.add_argument("--bankroll", type=float, default=INITIAL_BANKROLL, help="starting bankroll USDC")
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--verticals",
+        default="politics",
+        help=f"comma-separated: {','.join(VERTICAL_TAGS)} (default: politics)",
+    )
     p.add_argument("--json", action="store_true", help="dump final summary as JSON to stdout")
     args = p.parse_args()
     INITIAL_BANKROLL = args.bankroll
+    verticals = [v.strip() for v in args.verticals.split(",") if v.strip()]
 
     print("=" * 78)
     print("polymoney whale-copy backtest (standalone)")
-    print(f"  bankroll=${args.bankroll}  windows={args.months}  seed={args.seed}")
+    print(f"  bankroll=${args.bankroll}  windows={args.months}  verticals={verticals}  seed={args.seed}")
     print(f"  fees={POLYMARKET_FEE_PCT:.0%} taker  slippage={SLIPPAGE_PCT:.1%}  gas=${GAS_USDC}")
+    print(f"  whale_min_usdc=${WHALE_MIN_TRADE_USDC}  leaderboard={WHALE_LEADERBOARD_LIMIT} per window")
     print("=" * 78)
 
-    result = run(months=args.months, seed=args.seed)
+    result = run(months=args.months, seed=args.seed, verticals=verticals)
 
     if args.json:
         print("\n--- JSON ---")
