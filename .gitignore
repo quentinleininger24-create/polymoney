@@ -58,3 +58,5 @@ backtest_results/
 
 # Claude local
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/
