@@ -34,7 +34,8 @@ services:
       timeout: 3s
       retries: 5
 
-  # One-shot: apply alembic migrations before any service touches the DB.
+  # One-shot: ensure all tables exist before any service touches the DB.
+  # Uses SQLAlchemy create_all() which is idempotent -- safe to re-run.
   migrate:
     build: .
     image: polymoney:latest
@@ -45,7 +46,7 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+psycopg://polymoney:${DB_PASSWORD:-polymoney}@postgres:5432/polymoney
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "scripts/init_db.py"]
     restart: "no"
 
   ingestion:

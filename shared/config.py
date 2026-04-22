@@ -62,7 +62,13 @@ class Settings(BaseSettings):
 
     @property
     def database_url_sync(self) -> str:
-        return self.database_url.replace("+psycopg", "").replace("postgresql+asyncpg", "postgresql")
+        # psycopg v3 supports both sync and async modes; keep the driver prefix
+        # so alembic (sync) uses the same dbapi we install. Only rewrite asyncpg
+        # URLs (which we do not actually use) to the psycopg equivalent.
+        url = self.database_url.replace("postgresql+asyncpg", "postgresql+psycopg")
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return url
 
     @property
     def is_live(self) -> bool:
