@@ -1,0 +1,113 @@
+# Production stack: everything the bot needs, running in containers.
+# Usage on VPS:
+#   cp .env.example .env && nano .env        # fill in your keys
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.prod.yml logs -f order_manager
+#   docker compose -f docker-compose.prod.yml down             # stop all
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg16
+    container_name: polymoney_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: polymoney
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-polymoney}
+      POSTGRES_DB: polymoney
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polymoney"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: polymoney_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # One-shot: apply alembic migrations before any service touches the DB.
+  migrate:
+    build: .
+    image: polymoney:latest
+    container_name: polymoney_migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://polymoney:${DB_PASSWORD:-polymoney}@postgres:5432/polymoney
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  ingestion:
+    image: polymoney:latest
+    container_name: polymoney_ingestion
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://polymoney:${DB_PASSWORD:-polymoney}@postgres:5432/polymoney
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "-m", "ingestion.scheduler"]
+    restart: unless-stopped
+
+  order_manager:
+    image: polymoney:latest
+    container_name: polymoney_order_manager
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://polymoney:${DB_PASSWORD:-polymoney}@postgres:5432/polymoney
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "-m", "execution.order_manager"]
+    restart: unless-stopped
+
+  bot:
+    image: polymoney:latest
+    container_name: polymoney_bot
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://polymoney:${DB_PASSWORD:-polymoney}@postgres:5432/polymoney
+      REDIS_URL: redis://redis:6379/0
+    command: ["python", "-m", "bot.telegram_bot"]
+    restart: unless-stopped
+
+  api:
+    image: polymoney:latest
+    container_name: polymoney_api
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://polymoney:${DB_PASSWORD:-polymoney}@postgres:5432/polymoney
+      REDIS_URL: redis://redis:6379/0
+    command: ["uvicorn", "shared.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Only bind to localhost; tunnel via SSH if you want to view dashboard locally:
+    #   ssh -L 8000:localhost:8000 root@your-vps-ip
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+  redis_data:
