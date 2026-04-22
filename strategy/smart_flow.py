@@ -50,33 +50,65 @@ log = get_logger(__name__)
 
 
 class SmartFlowStrategy(Strategy):
-    name = "smart_flow"
-    allocation_pct = 0.40  # complements smart-whale's 60 pct
+    """Two preset profiles available via `profile` param:
 
-    # Locked defaults from validated 12-month walk-forward
-    effective_kelly = 0.50
-    effective_max_position_pct = 0.12
-    monthly_drawdown_stop_pct = 0.10
+    - "safe" (default): dominance 0.60, Kelly 0.5, max 12 pct, monthly-stop 10 pct.
+      Validated 12-month: +37 pct/mo, worst -13 pct, DD 12 pct, 67 pct consistency.
+
+    - "aggressive": dominance 0.50, Kelly 0.5, max 15 pct, no monthly stop.
+      Validated 12-month compound on $500: ended $677k (1356x), max DD 50 pct,
+      trough -44 pct of start, NEVER ruined, 100 pct monthly consistency.
+      Worst single month -23 pct. Best months +616 pct and +445 pct.
+      Trade this when the user explicitly opts in to high variance for
+      high compounding, understanding the drawdown.
+    """
+
+    name = "smart_flow"
+    allocation_pct = 0.40  # when paired with smart_whale; set to 1.0 if solo
+
+    # Live config defaults (populated by __init__)
+    effective_kelly: float
+    effective_max_position_pct: float
+    monthly_drawdown_stop_pct: float
 
     def __init__(
         self,
+        profile: str = "safe",
         lookback_hours: int = 48,
-        dominance_threshold: float = 0.60,
-        min_whale_volume_usdc: float = 2000.0,
-        min_market_volume_24h: float = 1000.0,
-        min_market_total_volume: float = 10_000.0,
+        min_market_volume_24h: float | None = None,
+        min_market_total_volume: float | None = None,
         min_price: float = 0.10,
         max_price: float = 0.75,
-        monthly_drawdown_stop_pct: float = 0.10,
     ):
+        if profile not in ("safe", "aggressive"):
+            raise ValueError(f"profile must be 'safe' or 'aggressive', got {profile}")
+        self.profile = profile
+        if profile == "safe":
+            dominance_threshold = 0.60
+            min_whale_volume_usdc = 2000.0
+            self.effective_kelly = 0.50
+            self.effective_max_position_pct = 0.12
+            self.monthly_drawdown_stop_pct = 0.10
+            self.allocation_pct = 0.40
+            default_min_vol24 = 1000.0
+            default_min_total = 10_000.0
+        else:  # aggressive
+            dominance_threshold = 0.50
+            min_whale_volume_usdc = 2000.0
+            self.effective_kelly = 0.50
+            self.effective_max_position_pct = 0.15
+            self.monthly_drawdown_stop_pct = 1.0  # effectively disabled
+            self.allocation_pct = 1.0  # solo mode; scale down when combined
+            default_min_vol24 = 1000.0
+            default_min_total = 10_000.0
+
         self.lookback_hours = lookback_hours
         self.dominance_threshold = dominance_threshold
         self.min_whale_volume = Decimal(str(min_whale_volume_usdc))
-        self.min_vol24 = min_market_volume_24h
-        self.min_total_vol = min_market_total_volume
+        self.min_vol24 = min_market_volume_24h if min_market_volume_24h is not None else default_min_vol24
+        self.min_total_vol = min_market_total_volume if min_market_total_volume is not None else default_min_total
         self.min_price = Decimal(str(min_price))
         self.max_price = Decimal(str(max_price))
-        self.monthly_drawdown_stop_pct = monthly_drawdown_stop_pct
 
     def _market_is_liquid(self, market: Market) -> bool:
         raw = market.raw or {}

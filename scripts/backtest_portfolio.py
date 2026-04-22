@@ -409,7 +409,7 @@ def build_convergence_entries(markets, whale_set, test_start_ts, test_end_ts):
         if liq_vol24(m) < CV_MIN_VOL24 and liq_total(m) < CV_MIN_TOTAL_VOL:
             continue
         scheduled.append((entry_ts, m, token))
-    scheduled.sort()
+    scheduled.sort(key=lambda r: r[0])
 
     for entry_ts, m, token in scheduled:
         net_yes = 0.0

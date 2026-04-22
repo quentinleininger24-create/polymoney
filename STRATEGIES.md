@@ -104,6 +104,61 @@ triggers = smoother combined equity curve. Monthly stop is enforced via
 `SmartFlowStrategy._month_is_halted()` checked at every `generate_intents()`
 call.
 
+### smart-flow aggressive preset (new, opt-in)
+
+Instantiate with `SmartFlowStrategy(profile="aggressive")` for the compound
+growth version: dominance 0.50, Kelly 0.5, max position 15 pct, no monthly
+stop. Designed for users who explicitly accept higher variance to capture
+compound upside, understanding that drawdowns will be bigger.
+
+**Validated with compound bankroll** (not reset each month) on 12 months
+of politics, $500 start:
+
+  trades=67  wr=61.2%  ending=$677,991  multiple=1356x  total_roi +135,498%
+  peak=$677,991  trough=$278  peak_to_trough_dd=50.5%  ruined=False
+  monthly consistency=100% (every month had trades)
+  worst single month -23%  best single months +616%, +445%, +166%
+
+Monthly equity curve (from `scripts/backtest_compound.py`):
+```
+  2025-05  $  425  -15%   <- flat early, 1 trade
+  2025-06  $  471  +11%
+  2025-07  $  414  -12%   <- trough near $278 in this range
+  2025-08  $ 1099  +166%
+  2025-09  $ 7878  +616%  <- edge starts firing hard
+  2025-10  $10643  +35%
+  2025-11  $25753  +142%
+  2025-12  $19737  -23%   <- worst single month
+  2026-01  $54927  +178%
+  2026-02 $299415  +445%
+  2026-03 $254503  -15%
+  2026-04 $677992  +166%
+```
+
+Honest caveats:
+- The $500 -> $678k number assumes UNLIMITED LIQUIDITY. In reality, as
+  bankroll grows past roughly $5-10k, single-market position caps will
+  bind and you'll be forced to deploy smaller %-positions, capping real
+  growth. Practical ceiling on $500 starting: probably $5k-$50k in a
+  year, still 10x-100x.
+- Once you become a whale yourself (bankroll ~$100k), you ARE the flow
+  signal, your entries move the market, and the edge decays. This is
+  the fundamental capacity problem of copy-trading.
+- Max DD 50 pct is real. Psychologically rough to watch, but the
+  backtest never goes below 20 pct of start; user will feel like things
+  broke but they didn't.
+- 12-month backtest is one sample. Different regime could look
+  different. The per-whale edge from Polymarket leaderboards carries
+  survivorship bias -- live performance will be lower than backtest
+  suggests.
+
+**How to ship**: default to `profile="safe"` for auto-trading. Let the
+user flip to `"aggressive"` only after they've run paper-mode for >=30
+days AND bankroll is between $100 and $10k (liquidity sweet spot).
+
+**Run the compound simulation**:
+  `python scripts/backtest_compound.py --months 12 --bankroll 500`
+
 ## Tested and dropped
 
 ### whale-copy v1

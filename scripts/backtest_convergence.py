@@ -326,7 +326,7 @@ def run_convergence(markets, whale_addrs, test_start_ts, test_end_ts):
         if not passes_liquidity(m):
             continue
         scheduled.append((entry_ts, m, token))
-    scheduled.sort()
+    scheduled.sort(key=lambda r: r[0])
 
     for entry_ts, m, token in scheduled:
         consensus, vol = compute_whale_consensus(m["conditionId"], entry_ts, whale_addrs)
