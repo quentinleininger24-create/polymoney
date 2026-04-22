@@ -4,7 +4,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential curl git ca-certificates \
@@ -15,10 +16,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+COPY . .
 RUN uv venv /opt/venv \
     && uv pip install --python /opt/venv/bin/python -e .
-
-COPY . .
 
 CMD ["python", "-m", "ingestion.scheduler"]
