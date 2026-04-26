@@ -42,11 +42,15 @@ async def main() -> None:
     # Price snapshot (5 min) -- feeds PriceTick used by reflection decisive-move detection
     sched.add_job(job_prices, "interval", minutes=5)
 
-    # News ingestion (5 min -- politics moves fast on breaking news)
-    sched.add_job(job_news, "interval", minutes=5)
+    # News ingestion: 60 min cadence keeps us under NewsAPI free tier's
+    # 100 req/day limit (24 req/day with this schedule). Cranking up to
+    # 5 min like before instantly 429s the API.
+    sched.add_job(job_news, "interval", minutes=60)
 
-    # Twitter (2 min -- real-time edge source)
-    sched.add_job(job_twitter, "interval", minutes=2)
+    # Twitter is DISABLED on free X tier -- their API now returns
+    # 402 Payment Required even for read-only public-account access.
+    # Re-enable this line if you sign up for X Basic ($100/mo, 10k reads/mo):
+    #   sched.add_job(job_twitter, "interval", minutes=30)
 
     # Reddit (15 min)
     sched.add_job(job_reddit, "interval", minutes=15)
