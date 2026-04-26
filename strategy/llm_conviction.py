@@ -27,27 +27,33 @@ class LLMConvictionStrategy(Strategy):
     name = "llm_conviction"
     allocation_pct = 0.50  # 50% of bankroll — primary strat for small portfolio
 
-    def __init__(self, event_lookback_minutes: int = 10):
+    def __init__(self, event_lookback_minutes: int = 60):
+        # GDELT often emits seendates 10-30 min behind real-time, so a 10-min
+        # lookback misses most events. 60 min keeps the LLM analyst busy and
+        # still avoids re-acting on stale news.
         self.event_lookback_minutes = event_lookback_minutes
 
     async def generate_intents(self) -> list[TradeIntent]:
-        cutoff = datetime.utcnow() - timedelta(minutes=self.event_lookback_minutes)
+        # Pull recently-INGESTED events (newest by id), regardless of their
+        # stated `ts`. GDELT for example reports an article's seendate, which
+        # may be old, but we still want to analyze whatever we just fetched.
         async with session_scope() as db:
-            result = await db.execute(
-                select(Event)
-                .where(Event.ts >= cutoff)
-                .order_by(Event.ts.desc())
-                .limit(50)
-            )
-            events = result.scalars().all()
-            # Skip events that already produced a signal from this strategy
             processed_ids = await db.execute(
                 select(Signal.event_id).where(Signal.strategy == self.name)
             )
             processed = {row[0] for row in processed_ids}
 
+            result = await db.execute(
+                select(Event)
+                .order_by(Event.id.desc())
+                .limit(200)  # candidate pool; we trim to unprocessed below
+            )
+            events = [ev for ev in result.scalars().all() if ev.id not in processed][:50]
+
         if not events:
+            log.info("llm_conviction.no_unprocessed_events")
             return []
+        log.info("llm_conviction.candidates", n=len(events))
 
         markets = await load_market_context(limit=80)
         if not markets:

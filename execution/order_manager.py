@@ -75,17 +75,24 @@ class OrderManager:
             if k not in best or i.confidence > best[k].confidence:
                 best[k] = i
 
+        # Whale-derived strategies ARE the signal -- the strategy's own
+        # detection logic is the corroborating evidence. The confluence gate
+        # only applies to event-based strategies (llm_conviction, news_arb)
+        # which need cross-source corroboration before firing.
+        whale_native = {"smart_whale", "smart_flow", "whale_copy"}
+
         for intent in best.values():
-            # Confluence gate
-            passes, supporting = await confluence.has_confluence(
-                intent.market_id, intent.outcome, stressed=reflection_state.stressed
-            )
-            if not passes:
-                log.info("trade.skipped_confluence",
-                         market=intent.market_id[:10],
-                         supporting=list(supporting),
-                         stressed=reflection_state.stressed)
-                continue
+            if intent.strategy not in whale_native:
+                passes, supporting = await confluence.has_confluence(
+                    intent.market_id, intent.outcome, stressed=reflection_state.stressed
+                )
+                if not passes:
+                    log.info("trade.skipped_confluence",
+                             market=intent.market_id[:10],
+                             strategy=intent.strategy,
+                             supporting=list(supporting),
+                             stressed=reflection_state.stressed)
+                    continue
             await self._execute_intent(intent)
 
     async def _execute_intent(self, intent: TradeIntent) -> None:
