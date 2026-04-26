@@ -162,6 +162,13 @@ and lead time vs the decisive price move.
   being asked. README is the single user-facing doc.
 - Do not switch LLM providers without the user's say-so. Gemini 3 was
   picked explicitly -- Anthropic swap out is in history but not default.
+- LLM model names are **ANCHORED**. Do NOT change them unless the user
+  explicitly asks. The confirmed live names on Google's API (as the user
+  verified) are:
+    GEMINI_MODEL_FAST=gemini-3-flash-preview
+    GEMINI_MODEL_SMART=gemini-3.1-pro-preview
+  If a 404 'model not found' error appears, do NOT silently fall back to
+  another model name. Tell the user, ask before changing.
 
 ## Repo state shortcuts
 

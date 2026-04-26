@@ -32,8 +32,10 @@ class Settings(BaseSettings):
     wallet_address: str = ""
 
     gemini_api_key: str = ""
+    # ANCHORED MODEL NAMES -- do NOT change without explicit user instruction.
+    # These are the live Google API identifiers as confirmed by the user.
     gemini_model_fast: str = "gemini-3-flash-preview"
-    gemini_model_smart: str = "gemini-3-pro"
+    gemini_model_smart: str = "gemini-3.1-pro-preview"
 
     newsapi_key: str = ""
     gdelt_enabled: bool = True
