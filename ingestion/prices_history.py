@@ -66,7 +66,7 @@ async def snapshot_current_prices() -> int:
             if not yes_token:
                 continue
             try:
-                points = await client.fetch(yes_token, interval="1m", fidelity=1)
+                points = await client.fetch(yes_token, interval="1h", fidelity=60)
             except Exception as e:  # noqa: BLE001
                 log.warning("prices.fetch_failed", market=m.id[:10], err=str(e))
                 continue
